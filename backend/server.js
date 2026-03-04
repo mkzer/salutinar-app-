@@ -8,11 +8,22 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-in-production';
 const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || bcrypt.hashSync('admin123', 10);
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'mkzeranis@gmail.com';
+
+// ─── Mailer ───────────────────────────────────────────────────────────────────
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER || ADMIN_EMAIL,
+    pass: process.env.GMAIL_APP_PASSWORD || ''
+  }
+});
 
 // Storage paths
 const UPLOADS_DIR = path.join(__dirname, 'data', 'uploads');
@@ -266,6 +277,61 @@ app.get('/api/view/:archiveId/info', (req, res) => {
     return res.status(410).json({ error: 'Expired' });
   }
   res.json({ clientName: archive.clientName, imageCount: archive.imageCount });
+});
+
+// Client selection — send email to photographer
+app.post('/api/view/:archiveId/select', async (req, res) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'No token' });
+
+  let payload;
+  try {
+    payload = jwt.verify(token, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+
+  if (payload.archiveId !== req.params.archiveId) {
+    return res.status(403).json({ error: 'Token mismatch' });
+  }
+
+  const { selectedIndexes } = req.body;
+  if (!Array.isArray(selectedIndexes) || selectedIndexes.length === 0) {
+    return res.status(400).json({ error: 'Aucune photo sélectionnée' });
+  }
+
+  const db = loadDB();
+  const archive = db.archives[req.params.archiveId];
+  if (!archive || !archive.active) return res.status(404).json({ error: 'Not found' });
+
+  const selectedNames = selectedIndexes
+    .filter(i => i >= 0 && i < archive.images.length)
+    .map(i => archive.images[i]);
+
+  const photoList = selectedNames.map((name, i) => `  ${i + 1}. ${name}`).join('\n');
+
+  try {
+    await transporter.sendMail({
+      from: `"Salutinar Gallery" <${process.env.GMAIL_USER || ADMIN_EMAIL}>`,
+      to: ADMIN_EMAIL,
+      subject: `📸 Sélection de ${archive.clientName} — ${selectedNames.length} photo(s)`,
+      text: `Bonjour,\n\n${archive.clientName} a sélectionné ${selectedNames.length} photo(s) :\n\n${photoList}\n\nGalerie ID : ${req.params.archiveId}\n\nBonne journée !`,
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 2rem; background: #f9f9f9;">
+          <h2 style="color: #333;">📸 Sélection de <strong>${archive.clientName}</strong></h2>
+          <p style="color: #666;">${archive.clientName} a sélectionné <strong>${selectedNames.length} photo(s)</strong> :</p>
+          <ol style="background: #fff; padding: 1.5rem 2rem; border-radius: 8px; border: 1px solid #eee;">
+            ${selectedNames.map(name => `<li style="padding: 0.3rem 0; color: #333;">${name}</li>`).join('')}
+          </ol>
+          <p style="color: #999; font-size: 0.85rem; margin-top: 1.5rem;">Galerie ID : ${req.params.archiveId}</p>
+        </div>
+      `
+    });
+    res.json({ success: true, count: selectedNames.length });
+  } catch (err) {
+    console.error('Email error:', err);
+    res.status(500).json({ error: 'Erreur envoi email' });
+  }
 });
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
