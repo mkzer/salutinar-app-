@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
@@ -82,10 +83,10 @@ app.post('/api/admin/login', async (req, res) => {
 });
 
 // Upload archive
-app.post('/api/archives', adminAuth, upload.single('archive'), async (req, res) => {
+app.post('/api/archives', adminAuth, upload.array('archives', 500), async (req, res) => {
   try {
     const { clientName, password, expiresInDays } = req.body;
-    if (!clientName || !password || !req.file) {
+    if (!clientName || !password || !req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'Missing fields' });
     }
 
@@ -93,39 +94,40 @@ app.post('/api/archives', adminAuth, upload.single('archive'), async (req, res) 
     const archiveDir = path.join(ARCHIVES_DIR, archiveId);
     fs.mkdirSync(archiveDir, { recursive: true });
 
-    // Extract images from zip/tar or handle single image
-    const ext = path.extname(req.file.originalname).toLowerCase();
     let imageFiles = [];
 
-    if (ext === '.zip') {
-      const zip = new AdmZip(req.file.path);
-      const entries = zip.getEntries();
-      for (const entry of entries) {
-        const entryExt = path.extname(entry.entryName).toLowerCase();
-        if (['.jpg', '.jpeg', '.png', '.webp'].includes(entryExt) && !entry.isDirectory) {
-          const imgName = `${imageFiles.length.toString().padStart(4, '0')}${entryExt}`;
-          const imgPath = path.join(archiveDir, imgName);
-          zip.extractEntryTo(entry, archiveDir, false, true, false, imgName);
-          // Resize to max 2400px wide for performance, strip EXIF
-          await sharp(imgPath)
-            .resize({ width: 2400, withoutEnlargement: true })
-            .toFile(imgPath + '.opt.jpg')
-            .catch(() => {});
-          if (fs.existsSync(imgPath + '.opt.jpg')) {
-            fs.renameSync(imgPath + '.opt.jpg', imgPath.replace(entryExt, '.jpg'));
-            if (imgPath.replace(entryExt, '.jpg') !== imgPath) fs.unlinkSync(imgPath);
-          }
-          imageFiles.push(path.basename(imgPath.replace(entryExt, '.jpg')));
-        }
-      }
-    } else if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
-      const imgName = `0001${ext}`;
-      fs.copyFileSync(req.file.path, path.join(archiveDir, imgName));
-      imageFiles.push(imgName);
-    }
+    for (const uploadedFile of req.files) {
+      const ext = path.extname(uploadedFile.originalname).toLowerCase();
 
-    // Cleanup upload
-    fs.unlinkSync(req.file.path);
+      if (ext === '.zip') {
+        const zip = new AdmZip(uploadedFile.path);
+        const entries = zip.getEntries();
+        for (const entry of entries) {
+          const entryExt = path.extname(entry.entryName).toLowerCase();
+          if (['.jpg', '.jpeg', '.png', '.webp'].includes(entryExt) && !entry.isDirectory) {
+            const imgName = `${imageFiles.length.toString().padStart(4, '0')}${entryExt}`;
+            const imgPath = path.join(archiveDir, imgName);
+            zip.extractEntryTo(entry, archiveDir, false, true, false, imgName);
+            await sharp(imgPath)
+              .resize({ width: 2400, withoutEnlargement: true })
+              .toFile(imgPath + '.opt.jpg')
+              .catch(() => {});
+            if (fs.existsSync(imgPath + '.opt.jpg')) {
+              fs.renameSync(imgPath + '.opt.jpg', imgPath.replace(entryExt, '.jpg'));
+              if (imgPath.replace(entryExt, '.jpg') !== imgPath) fs.unlinkSync(imgPath);
+            }
+            imageFiles.push(path.basename(imgPath.replace(entryExt, '.jpg')));
+          }
+        }
+      } else if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
+        const imgName = `${imageFiles.length.toString().padStart(4, '0')}.jpg`;
+        const imgPath = path.join(archiveDir, imgName);
+        await sharp(uploadedFile.path)
+          .resize({ width: 2400, withoutEnlargement: true })
+          .toFile(imgPath)
+          .catch(() => fs.copyFileSync(uploadedFile.path, imgPath));
+        imageFiles.push(imgName);
+      }
 
     if (imageFiles.length === 0) {
       fs.rmSync(archiveDir, { recursive: true });

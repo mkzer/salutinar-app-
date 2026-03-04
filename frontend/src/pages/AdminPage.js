@@ -63,7 +63,7 @@ export default function AdminPage() {
   const [token, setToken] = useState(() => sessionStorage.getItem('adminToken'));
   const [archives, setArchives] = useState([]);
   const [form, setForm] = useState({ clientName: '', password: '', expiresInDays: '30' });
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [lastResult, setLastResult] = useState(null);
@@ -94,13 +94,13 @@ export default function AdminPage() {
 
   const handleUpload = async (e) => {
     e.preventDefault();
-    if (!file || !form.clientName || !form.password) { setError('Tous les champs sont requis.'); return; }
+    if (!files.length || !form.clientName || !form.password) { setError('Tous les champs sont requis.'); return; }
     setError('');
     setUploading(true);
     setUploadProgress(0);
 
     const fd = new FormData();
-    fd.append('archive', file);
+    files.forEach(f => fd.append('archives', f));
     fd.append('clientName', form.clientName);
     fd.append('password', form.password);
     fd.append('expiresInDays', form.expiresInDays);
@@ -121,7 +121,7 @@ export default function AdminPage() {
       if (xhr.status !== 200) { setError(result.error || 'Erreur upload'); setUploading(false); return; }
       setLastResult(result);
       setForm({ clientName: '', password: '', expiresInDays: '30' });
-      setFile(null);
+      setFiles([]);
       fetchArchives();
     } catch {
       setError('Erreur de connexion.');
@@ -184,20 +184,22 @@ export default function AdminPage() {
             </div>
 
             <div style={S.field}>
-              <label style={S.label}>Archive (ZIP, JPG, PNG, WebP — max 200MB)</label>
+              <label style={S.label}>Photos (JPG, PNG, WebP, ZIP — max 200MB — sélection multiple)</label>
               <div
-                style={{ ...S.fileZone, borderColor: file ? '#c9a96e44' : '#1e1e1e' }}
+                style={{ ...S.fileZone, borderColor: files.length ? '#c9a96e44' : '#1e1e1e' }}
                 onClick={() => fileRef.current.click()}
                 onDragOver={e => e.preventDefault()}
-                onDrop={e => { e.preventDefault(); setFile(e.dataTransfer.files[0]); }}
+                onDrop={e => { e.preventDefault(); setFiles(Array.from(e.dataTransfer.files)); }}
               >
-                {file
-                  ? <span style={{ color: '#c9a96e', fontSize: '0.85rem' }}>✓ {file.name}</span>
+                {files.length > 0
+                  ? <span style={{ color: '#c9a96e', fontSize: '0.85rem' }}>
+                      ✓ {files.length} fichier{files.length > 1 ? 's' : ''} sélectionné{files.length > 1 ? 's' : ''}
+                    </span>
                   : <span style={{ color: '#333', fontSize: '0.8rem', letterSpacing: '0.1em' }}>
-                      Cliquer ou glisser-déposer le fichier ici
+                      Cliquer ou glisser-déposer les photos ici
                     </span>
                 }
-                <input ref={fileRef} type="file" accept=".zip,.jpg,.jpeg,.png,.webp" style={{ display: 'none' }} onChange={e => setFile(e.target.files[0])} />
+                <input ref={fileRef} type="file" accept=".zip,.jpg,.jpeg,.png,.webp" multiple style={{ display: 'none' }} onChange={e => setFiles(Array.from(e.target.files))} />
               </div>
             </div>
 
